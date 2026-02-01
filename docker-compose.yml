@@ -1,0 +1,121 @@
+services:
+  # PostgreSQL with PostGIS
+  postgres:
+    image: postgis/postgis:15-3.3-alpine
+    container_name: mineralogy-db
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: mineralogy
+      POSTGRES_PASSWORD: ${DB_PASSWORD:-changeme123}
+      POSTGRES_DB: mineralogy_db
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./database/init.sql:/docker-entrypoint-initdb.d/init.sql
+    ports:
+      - "5432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U mineralogy -d mineralogy_db"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - mineralogy-network
+
+  # Backend API (FastAPI)
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: mineralogy-backend
+    restart: unless-stopped
+    environment:
+      DATABASE_URL: postgresql://mineralogy:${DB_PASSWORD:-changeme123}@postgres:5432/mineralogy_db
+      SECRET_KEY: ${SECRET_KEY:-your-secret-key-change-in-production}
+      KEYCLOAK_URL: ${KEYCLOAK_URL:-http://keycloak:8080}
+      KEYCLOAK_REALM: ${KEYCLOAK_REALM:-mineralogy}
+      KEYCLOAK_CLIENT_ID: ${KEYCLOAK_CLIENT_ID:-mineralogy-app}
+      KEYCLOAK_CLIENT_SECRET: ${KEYCLOAK_CLIENT_SECRET:-}
+      UPLOAD_DIR: /app/uploads
+      MAX_UPLOAD_SIZE: 5242880
+    volumes:
+      - uploads_data:/app/uploads
+      - ./backend:/app
+    ports:
+      - "8000:8000"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks:
+      - mineralogy-network
+    command: uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
+
+  # Frontend (React)
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    container_name: mineralogy-frontend
+    restart: unless-stopped
+    ports:
+      - "3000:3000"
+    environment:
+      REACT_APP_API_URL: ${REACT_APP_API_URL:-http://localhost:8000}
+      REACT_APP_KEYCLOAK_URL: ${KEYCLOAK_URL:-http://localhost:8080}
+      REACT_APP_KEYCLOAK_REALM: ${KEYCLOAK_REALM:-mineralogy}
+      REACT_APP_KEYCLOAK_CLIENT_ID: ${KEYCLOAK_CLIENT_ID:-mineralogy-app}
+    networks:
+      - mineralogy-network
+    command: npm start
+
+  # Caddy Reverse Proxy
+  caddy:
+    image: caddy:2-alpine
+    container_name: mineralogy-caddy
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+      - "443:443/udp"  # HTTP/3
+    volumes:
+      - ./caddy/Caddyfile:/etc/caddy/Caddyfile
+      - caddy_data:/data
+      - caddy_config:/config
+    depends_on:
+      - backend
+      - frontend
+    networks:
+      - mineralogy-network
+
+  # Keycloak Identity and Access Management
+  keycloak:
+    image: quay.io/keycloak/keycloak:23.0
+    container_name: mineralogy-keycloak
+    restart: unless-stopped
+    environment:
+      KEYCLOAK_ADMIN: admin
+      KEYCLOAK_ADMIN_PASSWORD: ${KEYCLOAK_ADMIN_PASSWORD:-admin}
+      KC_DB: postgres
+      KC_DB_URL: jdbc:postgresql://postgres:5432/keycloak_db
+      KC_DB_USERNAME: mineralogy
+      KC_DB_PASSWORD: ${DB_PASSWORD:-changeme123}
+      KC_HOSTNAME: localhost
+      KC_HTTP_ENABLED: "true"
+    ports:
+      - "8080:8080"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks:
+      - mineralogy-network
+    command: start-dev
+
+volumes:
+  postgres_data:
+  uploads_data:
+  frontend_node_modules:
+  caddy_data:
+  caddy_config:
+
+networks:
+  mineralogy-network:
+    driver: bridge

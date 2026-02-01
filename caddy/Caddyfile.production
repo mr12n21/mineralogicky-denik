@@ -1,0 +1,25 @@
+# Jednoduchý Caddyfile pro produkci - HTTP pouze
+{
+    auto_https off
+}
+
+# HTTP na portu 80
+:80 {
+    # API backend - MUSÍ BÝT PŘED frontendem!
+    reverse_proxy /api/* backend:8000
+    
+    # Uploads
+    reverse_proxy /uploads/* backend:8000
+    
+    # Docs
+    reverse_proxy /docs* backend:8000
+    
+    # Health
+    reverse_proxy /health backend:8000
+    
+    # Frontend - MUSÍ BÝT POSLEDNÍ (zachytí všechno ostatní)
+    reverse_proxy /* frontend:80
+    
+    encode gzip
+}
+`

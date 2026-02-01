@@ -1,0 +1,5 @@
+# Run backup every day at 2 AM
+0 2 * * * /usr/local/bin/backup.sh >> /var/log/backup.log 2>&1
+
+# Disabled: Run backup on container start (for testing)
+# @reboot sleep 60 && /usr/local/bin/backup.sh >> /var/log/backup.log 2>&1

@@ -1,0 +1,208 @@
+services:
+  # PostgreSQL with PostGIS
+  postgres:
+    image: imresamu/postgis:15-3.4
+    container_name: mineralogy-db
+    restart: always
+    environment:
+      POSTGRES_USER: mineralogy
+      POSTGRES_PASSWORD: ${DB_PASSWORD}
+      POSTGRES_DB: mineralogy_db
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./database/init.sql:/docker-entrypoint-initdb.d/init.sql
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U mineralogy -d mineralogy_db"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+    networks:
+      - mineralogy-network
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "20m"
+        max-file: "10"
+
+  # Backend API (FastAPI)
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    image: mineralogy-backend:production
+    container_name: mineralogy-backend
+    restart: always
+    environment:
+      DATABASE_URL: postgresql://mineralogy:${DB_PASSWORD}@postgres:5432/mineralogy_db
+      SECRET_KEY: ${SECRET_KEY}
+      KEYCLOAK_URL: ${KEYCLOAK_URL}
+      KEYCLOAK_REALM: ${KEYCLOAK_REALM}
+      KEYCLOAK_CLIENT_ID: ${KEYCLOAK_CLIENT_ID}
+      KEYCLOAK_CLIENT_SECRET: ${KEYCLOAK_CLIENT_SECRET}
+      UPLOAD_DIR: /app/uploads
+      MAX_UPLOAD_SIZE: 10485760
+      ENVIRONMENT: production
+    volumes:
+      - uploads_data:/app/uploads
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks:
+      - mineralogy-network
+    command: uvicorn app.main:app --host 0.0.0.0 --port 8000 --workers 2
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+    healthcheck:
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:8000/api/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+
+  # Frontend (React)
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile.production
+      args:
+        REACT_APP_API_URL: ${REACT_APP_API_URL}
+        REACT_APP_KEYCLOAK_URL: ${KEYCLOAK_URL}
+        REACT_APP_KEYCLOAK_REALM: ${KEYCLOAK_REALM}
+        REACT_APP_KEYCLOAK_CLIENT_ID: ${KEYCLOAK_CLIENT_ID}
+    image: mineralogy-frontend:production
+    container_name: mineralogy-frontend
+    restart: always
+    networks:
+      - mineralogy-network
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  # Caddy Reverse Proxy
+  caddy:
+    image: caddy:2-alpine
+    container_name: mineralogy-caddy
+    restart: always
+    ports:
+      - "80:80"
+      - "443:443"
+      - "443:443/udp"  # HTTP/3
+    volumes:
+      - ./caddy/Caddyfile.production:/etc/caddy/Caddyfile
+      - caddy_data:/data
+      - caddy_config:/config
+    depends_on:
+      - backend
+      - frontend
+    networks:
+      - mineralogy-network
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  # Keycloak Identity and Access Management
+  keycloak:
+    image: quay.io/keycloak/keycloak:23.0
+    container_name: mineralogy-keycloak
+    restart: always
+    environment:
+      KEYCLOAK_ADMIN: ${KEYCLOAK_ADMIN}
+      KEYCLOAK_ADMIN_PASSWORD: ${KEYCLOAK_ADMIN_PASSWORD}
+      KC_DB_URL_HOST: postgres
+      KC_DB_URL_PORT: 5432
+      KC_DB_URL_DATABASE: keycloak_db
+      KC_DB_USERNAME: mineralogy
+      KC_DB_PASSWORD: ${DB_PASSWORD}
+      KC_HOSTNAME: ${KEYCLOAK_HOSTNAME}
+      KC_PROXY: edge
+      KC_HTTP_ENABLED: "true"
+      KC_HEALTH_ENABLED: "true"
+      KC_METRICS_ENABLED: "true"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks:
+      - mineralogy-network
+    command: start --db=postgres --db-url=jdbc:postgresql://postgres:5432/keycloak_db --db-username=mineralogy --db-password=${DB_PASSWORD} --optimized
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+    healthcheck:
+      test: ["CMD-SHELL", "exec 3<>/dev/tcp/127.0.0.1/8080;echo -e \"GET /health/ready HTTP/1.1\r\nhost: 127.0.0.1:8080\r\nConnection: close\r\n\r\n\" >&3;grep \"HTTP/1.1 200 OK\" <&3"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 90s
+
+  # Portainer - Container Management
+  portainer:
+    image: portainer/portainer-ce:2.19.4-alpine
+    container_name: mineralogy-portainer
+    restart: always
+    ports:
+      - "9000:9000"
+      - "9443:9443"
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - portainer_data:/data
+    networks:
+      - mineralogy-network
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  # Automated Backup Service
+  backup:
+    build:
+      context: ./backup
+      dockerfile: Dockerfile
+    container_name: mineralogy-backup
+    restart: always
+    environment:
+      DB_HOST: postgres
+      DB_PORT: 5432
+      DB_NAME: mineralogy_db
+      DB_USER: mineralogy
+      DB_PASSWORD: ${DB_PASSWORD}
+      NAS_PATH: ${NAS_PATH:-/backups}
+      BACKUP_RETENTION_DAYS: ${BACKUP_RETENTION_DAYS:-30}
+    volumes:
+      - ./backups:/backups
+      - uploads_data:/uploads:ro
+    depends_on:
+      - postgres
+    networks:
+      - mineralogy-network
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+volumes:
+  postgres_data:
+    driver: local
+  uploads_data:
+    driver: local
+  caddy_data:
+    driver: local
+  caddy_config:
+    driver: local
+  portainer_data:
+    driver: local
+
+networks:
+  mineralogy-network:
+    driver: bridge

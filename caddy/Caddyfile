@@ -1,0 +1,105 @@
+# Caddyfile pro Mineralogický deník
+
+# Pro lokální vývoj s self-signed certifikátem
+{
+    # Automatické HTTPS
+    auto_https off
+    # Pro produkci odkomentujte řádek níže a nastavte svou doménu
+    # email your-email@example.com
+}
+
+# Hlavní server
+:80, :443 {
+    # Pro produkci s doménou nahraďte výše uvedené tímto:
+    # yourdomain.com {
+
+    # TLS pro lokální vývoj (self-signed)
+    tls internal
+
+    # Pro produkci s Let's Encrypt odkomentujte:
+    # tls your-email@example.com
+
+    # Logging
+    log {
+        output file /var/log/caddy/access.log
+        format json
+    }
+
+    # Hlavní aplikace (frontend)
+    handle /* {
+        reverse_proxy frontend:3000 {
+            # WebSocket support pro React hot reload
+            header_up Host {host}
+            header_up X-Real-IP {remote_host}
+        }
+    }
+
+    # API backend
+    handle /api/* {
+        reverse_proxy backend:8000 {
+            header_up Host {host}
+            header_up X-Real-IP {remote_host}
+        }
+    }
+
+    # Uploads/soubory
+    handle /uploads/* {
+        reverse_proxy backend:8000 {
+            header_up Host {host}
+            header_up X-Real-IP {remote_host}
+        }
+    }
+
+    # Health check
+    handle /health {
+        reverse_proxy backend:8000
+    }
+
+    # API dokumentace
+    handle /docs* {
+        reverse_proxy backend:8000
+    }
+
+    handle /redoc* {
+        reverse_proxy backend:8000
+    }
+
+    handle /openapi.json {
+        reverse_proxy backend:8000
+    }
+
+    # Security headers
+    header {
+        # Zakázat indexování
+        X-Robots-Tag "noindex, nofollow"
+        # XSS Protection
+        X-Content-Type-Options "nosniff"
+        X-Frame-Options "SAMEORIGIN"
+        # Referrer Policy
+        Referrer-Policy "strict-origin-when-cross-origin"
+        # Permissions Policy
+        Permissions-Policy "geolocation=(self), camera=(), microphone=()"
+        # Remove Server header
+        -Server
+    }
+
+    # Kompresi
+    encode gzip zstd
+
+    # Rate limiting (vyžaduje Caddy s rate-limit modulem)
+    # rate_limit {
+    #     zone dynamic {
+    #         key {remote_host}
+    #         events 100
+    #         window 1m
+    #     }
+    # }
+}
+
+# Keycloak (pokud používáte)
+:8080 {
+    reverse_proxy keycloak:8080 {
+        header_up Host {host}
+        header_up X-Real-IP {remote_host}
+    }
+}

@@ -1,0 +1,237 @@
+┌──────────────────────────────────────────────────────────────────┐
+│         MINERALOGICKÝ DENÍK - ADMIN QUICK REFERENCE              │
+│                    Produkční verze pro RPI                       │
+└──────────────────────────────────────────────────────────────────┘
+
+═══════════════════════════════════════════════════════════════════
+ 🔑 PŘÍSTUPY
+═══════════════════════════════════════════════════════════════════
+
+Frontend:        https://vase-domena.cz
+Backend API:     https://vase-domena.cz/api
+API Docs:        https://vase-domena.cz/api/docs
+Keycloak Admin:  http://IP:8080 (user: admin)
+Portainer:       https://IP:9443
+
+═══════════════════════════════════════════════════════════════════
+ 🚀 ZÁKLADNÍ PŘÍKAZY
+═══════════════════════════════════════════════════════════════════
+
+# Spuštění (první nasazení)
+./deploy-production.sh
+
+# Manuální spuštění
+docker compose -f docker-compose.production.yml up -d --build
+
+# Zastavení
+docker compose -f docker-compose.production.yml down
+
+# Restart všech služeb
+docker compose -f docker-compose.production.yml restart
+
+# Restart jedné služby
+docker compose -f docker-compose.production.yml restart backend
+
+# Status služeb
+docker compose -f docker-compose.production.yml ps
+
+═══════════════════════════════════════════════════════════════════
+ 📊 MONITORING
+═══════════════════════════════════════════════════════════════════
+
+# Logy všech služeb (real-time)
+docker compose -f docker-compose.production.yml logs -f
+
+# Logy konkrétní služby
+docker logs -f mineralogy-backend
+docker logs -f mineralogy-keycloak
+docker logs -f mineralogy-portainer
+
+# Posledních 100 řádků
+docker logs --tail=100 mineralogy-backend
+
+# Využití zdrojů (CPU, RAM)
+docker stats
+
+# Disk space
+df -h
+du -sh ~/mineralogicky-denik/*
+
+═══════════════════════════════════════════════════════════════════
+ 🔧 ÚDRŽBA
+═══════════════════════════════════════════════════════════════════
+
+# Aktualizace aplikace z Git
+cd ~/mineralogicky-denik
+git pull
+docker compose -f docker-compose.production.yml up -d --build
+
+# Pull nových Docker images
+docker compose -f docker-compose.production.yml pull
+docker compose -f docker-compose.production.yml up -d
+
+# Vyčištění starých images/volumes
+docker system prune -a
+docker volume prune
+
+# Vyčištění logů
+sudo truncate -s 0 /var/lib/docker/containers/*/*-json.log
+
+═══════════════════════════════════════════════════════════════════
+ 💾 ZÁLOHY
+═══════════════════════════════════════════════════════════════════
+
+# Manuální záloha databáze
+docker exec mineralogy-db pg_dump -U mineralogy mineralogy_db > \
+  backup_$(date +%Y%m%d_%H%M).sql
+
+# Záloha uploads
+tar -czf uploads_backup_$(date +%Y%m%d).tar.gz backend/uploads/
+
+# Obnovení databáze ze zálohy
+docker exec -i mineralogy-db psql -U mineralogy mineralogy_db < \
+  backup_20260131_1200.sql
+
+# Záloha celé databáze (všechny DB)
+docker exec mineralogy-db pg_dumpall -U mineralogy > \
+  full_backup_$(date +%Y%m%d).sql
+
+═══════════════════════════════════════════════════════════════════
+ 🐛 TROUBLESHOOTING
+═══════════════════════════════════════════════════════════════════
+
+# Kontejner neběží
+docker ps -a | grep mineralogy
+docker logs mineralogy-[service-name]
+docker compose -f docker-compose.production.yml restart [service]
+
+# Backend se nekonektuje k DB
+docker exec mineralogy-backend ping postgres
+docker exec -it mineralogy-db psql -U mineralogy -d mineralogy_db
+
+# Vyčerpání paměti
+free -h
+docker stats
+# Restart náročné služby nebo zvětšit swap
+
+# Port už je použitý
+sudo lsof -i :8000  # najít proces
+sudo netstat -tulpn | grep :8000
+
+# Health check failed
+docker inspect mineralogy-backend | grep Health
+docker logs mineralogy-backend --tail=50
+
+═══════════════════════════════════════════════════════════════════
+ 🔐 KEYCLOAK ADMIN
+═══════════════════════════════════════════════════════════════════
+
+1. Přístup: http://IP:8080
+2. Login: admin / KEYCLOAK_ADMIN_PASSWORD z .env
+3. Vytvořit realm: "mineralogy"
+4. Vytvořit client: "mineralogy-app"
+   - Client Protocol: openid-connect
+   - Access Type: confidential
+   - Valid Redirect URIs: https://vase-domena.cz/*
+5. Credentials tab -> zkopírovat Secret
+6. Přidat do .env jako KEYCLOAK_CLIENT_SECRET
+7. Restart backend
+8. Vytvořit admin uživatele v Users
+
+═══════════════════════════════════════════════════════════════════
+ 🐳 PORTAINER
+═══════════════════════════════════════════════════════════════════
+
+URL: https://IP:9443
+
+Co můžete:
+- Dashboard: Přehled všech kontejnerů
+- Containers -> mineralogy-backend:
+  • Quick actions: Start/Stop/Restart
+  • Logs: Real-time logy
+  • Inspect: Detaily kontejneru
+  • Stats: Grafy CPU/RAM
+  • Console: Bash přístup
+- Images: Správa images
+- Volumes: Správa volumes
+- Networks: Správa sítí
+
+═══════════════════════════════════════════════════════════════════
+ 🔥 FIREWALL (UFW)
+═══════════════════════════════════════════════════════════════════
+
+# Status
+sudo ufw status verbose
+
+# Povolit nový port
+sudo ufw allow 8080/tcp
+
+# Zablokovat port
+sudo ufw deny 8080/tcp
+
+# Smazat pravidlo
+sudo ufw delete allow 8080/tcp
+
+# Povolit z konkrétní IP
+sudo ufw allow from 192.168.1.100 to any port 9443
+
+# Reload
+sudo ufw reload
+
+═══════════════════════════════════════════════════════════════════
+ 📈 OPTIMALIZACE RPI
+═══════════════════════════════════════════════════════════════════
+
+# Teplota CPU
+vcgencmd measure_temp
+
+# CPU frekvence
+vcgencmd measure_clock arm
+
+# Throttling check
+vcgencmd get_throttled
+
+# Swap zvětšení (pro stabilitu)
+sudo dphys-swapfile swapoff
+sudo nano /etc/dphys-swapfile  # CONF_SWAPSIZE=2048
+sudo dphys-swapfile setup
+sudo dphys-swapfile swapon
+
+# Overclock (s aktivním chlazením!)
+sudo nano /boot/config.txt
+# arm_freq=1800
+# over_voltage=2
+
+═══════════════════════════════════════════════════════════════════
+ ⚠️ KRITICKÉ - NEZAPOMEŇTE!
+═══════════════════════════════════════════════════════════════════
+
+☑ ZMĚNIT všechna hesla v .env před prvním spuštěním!
+☑ Nastavit UFW firewall
+☑ Pravidelné zálohy (denní minimum)
+☑ Sledovat logy v Portaineru
+☑ Aktualizovat systém: sudo apt update && sudo apt upgrade
+☑ Aktualizovat Docker images: docker compose pull
+☑ Monitorovat disk space: df -h
+☑ Kontrolovat teplotu RPI: vcgencmd measure_temp
+
+═══════════════════════════════════════════════════════════════════
+ 📞 KDYŽ NĚCO NEFUNGUJE
+═══════════════════════════════════════════════════════════════════
+
+1. Zkontrolovat logy: docker logs [container-name]
+2. Zkontrolovat status: docker compose ps
+3. Zkontrolovat resources: docker stats
+4. Restartovat službu: docker compose restart [service]
+5. Použít Portainer pro GUI diagnostiku
+6. Zkontrolovat firewall: sudo ufw status
+7. Zkontrolovat disk space: df -h
+8. Zkontrolovat .env soubor (hesla, URL)
+
+═══════════════════════════════════════════════════════════════════
+
+Vytvořeno: 2026-01-31
+Verze: 1.0.0
+Platforma: Raspberry Pi 4 (ARM64)
+
+Pro detailní návod: README.production.md, PRODUCTION_SETUP.md

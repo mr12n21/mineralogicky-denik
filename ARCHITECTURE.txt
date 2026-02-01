@@ -1,0 +1,315 @@
+╔══════════════════════════════════════════════════════════════════════╗
+║                  MINERALOGICKÝ DENÍK - ARCHITEKTURA                  ║
+║                     Production Setup pro RPI                         ║
+╚══════════════════════════════════════════════════════════════════════╝
+
+                              INTERNET
+                                 │
+                                 │ HTTPS (443)
+                                 │ HTTP (80)
+                                 ▼
+                         ┌───────────────┐
+                         │               │
+                         │  🌐  CADDY    │  Reverse Proxy
+                         │  (Port 80/443)│  + Auto SSL
+                         │               │
+                         └───────┬───────┘
+                                 │
+                ┌────────────────┼────────────────┐
+                │                │                │
+                ▼                ▼                ▼
+        ┌──────────────┐ ┌──────────────┐ ┌──────────────┐
+        │              │ │              │ │              │
+        │  FRONTEND    │ │  BACKEND     │ │  KEYCLOAK    │
+        │  React+Nginx │ │  FastAPI     │ │  IAM         │
+        │  (Port 80)   │ │  (Port 8000) │ │  (Port 8080) │
+        │              │ │              │ │              │
+        └──────────────┘ └──────┬───────┘ └──────┬───────┘
+                                │                │
+                                │                │
+                                ▼                ▼
+                         ┌─────────────────────────┐
+                         │                         │
+                         │  📊  POSTGRESQL+POSTGIS │
+                         │  (Port 5432 - internal) │
+                         │                         │
+                         └────────────┬────────────┘
+                                      │
+                                      │ Backup
+                                      ▼
+                              ┌──────────────┐
+                              │              │
+                              │  💾  BACKUP  │
+                              │  Automated   │
+                              │              │
+                              └──────────────┘
+
+═══════════════════════════════════════════════════════════════════════
+
+                         SPRÁVA & MONITORING
+
+                         ┌──────────────┐
+                         │              │
+                         │  🐳 PORTAINER│  ← https://IP:9443
+                         │  (9000/9443) │
+                         │              │
+                         └──────┬───────┘
+                                │
+                                │ Docker Socket
+                                ▼
+                    ┌─────────────────────┐
+                    │   DOCKER ENGINE     │
+                    │   Spravuje všechny  │
+                    │   kontejnery        │
+                    └─────────────────────┘
+
+═══════════════════════════════════════════════════════════════════════
+
+                           DOCKER NETWORK
+                        (mineralogy-network)
+
+    ┌─────────────────────────────────────────────────────────┐
+    │                                                           │
+    │  • postgres        (databáze)                            │
+    │  • backend         (API)                                 │
+    │  • frontend        (SPA)                                 │
+    │  • caddy           (reverse proxy)                       │
+    │  • keycloak        (IAM)                                 │
+    │  • portainer       (management)                          │
+    │  • backup          (zálohy)                              │
+    │                                                           │
+    │  Všechny služby komunikují přes tuto síť                 │
+    │  Pouze caddy a portainer jsou přístupné zvenčí           │
+    │                                                           │
+    └─────────────────────────────────────────────────────────┘
+
+═══════════════════════════════════════════════════════════════════════
+
+                           DATA PERSISTENCE
+
+    ┌─────────────────────────────────────────────────────────┐
+    │  DOCKER VOLUMES:                                         │
+    │                                                           │
+    │  • postgres_data       → Databáze (perzistentní)         │
+    │  • uploads_data        → Nahrané fotky                   │
+    │  • caddy_data          → SSL certifikáty                 │
+    │  • caddy_config        → Caddy konfigurace               │
+    │  • portainer_data      → Portainer data                  │
+    │                                                           │
+    │  HOST FOLDERS:                                           │
+    │                                                           │
+    │  • ./backups/          → Zálohy databáze                 │
+    │  • ./secrets/          → Citlivá data (gitignored)       │
+    │  • ./caddy/            → Caddyfile konfigurace           │
+    │                                                           │
+    └─────────────────────────────────────────────────────────┘
+
+═══════════════════════════════════════════════════════════════════════
+
+                         SECURITY LAYERS
+
+    Layer 1: NETWORK
+    ├─ UFW Firewall (host)
+    ├─ Docker network isolation
+    └─ Pouze caddy a portainer vystaveny ven
+
+    Layer 2: APPLICATION
+    ├─ HTTPS automatické (Let's Encrypt)
+    ├─ Security headers (X-Frame-Options, CSP, etc.)
+    ├─ JWT autentizace
+    └─ Keycloak IAM
+
+    Layer 3: DATA
+    ├─ Encrypted connections (SSL/TLS)
+    ├─ Hashed passwords
+    ├─ Environment variables pro secrets
+    └─ Regular backups
+
+═══════════════════════════════════════════════════════════════════════
+
+                         USER FLOW
+
+    1. Uživatel → https://vase-domena.cz
+                      ↓
+    2. Caddy (SSL termination)
+                      ↓
+    3. Frontend (React SPA)
+                      ↓
+    4. API call → /api/*
+                      ↓
+    5. Backend (FastAPI)
+         ├─ Ověření JWT token
+         └─ Validace přes Keycloak
+                      ↓
+    6. Database query (PostgreSQL)
+                      ↓
+    7. Response ← zpět k uživateli
+
+═══════════════════════════════════════════════════════════════════════
+
+                      MONITORING & MANAGEMENT
+
+    ┌──────────────────────────────────────────────────────┐
+    │                                                        │
+    │  Portainer Dashboard                                  │
+    │  ────────────────────                                 │
+    │                                                        │
+    │  ┌──────────────┐  ┌──────────────┐                  │
+    │  │  Containers  │  │  Images      │                  │
+    │  │  - Status    │  │  - Versions  │                  │
+    │  │  - CPU/RAM   │  │  - Size      │                  │
+    │  │  - Logs      │  │  - Updates   │                  │
+    │  └──────────────┘  └──────────────┘                  │
+    │                                                        │
+    │  ┌──────────────┐  ┌──────────────┐                  │
+    │  │  Volumes     │  │  Networks    │                  │
+    │  │  - Usage     │  │  - Traffic   │                  │
+    │  │  - Cleanup   │  │  - Isolation │                  │
+    │  └──────────────┘  └──────────────┘                  │
+    │                                                        │
+    │  📊 Real-time stats                                   │
+    │  📝 Centralized logs                                  │
+    │  🔄 One-click restart                                 │
+    │  🖥️  Console access                                   │
+    │                                                        │
+    └──────────────────────────────────────────────────────┘
+
+═══════════════════════════════════════════════════════════════════════
+
+                    HEALTH CHECK SYSTEM
+
+    ┌────────────────────────────────────────────────────────┐
+    │                                                          │
+    │  Každý kontejner má health check:                       │
+    │                                                          │
+    │  Backend:     GET /health → 200 OK                      │
+    │  Frontend:    GET / → 200 OK                            │
+    │  Postgres:    pg_isready → success                      │
+    │  Keycloak:    GET /health/ready → 200 OK                │
+    │                                                          │
+    │  Při selhání:                                           │
+    │  1. Health check fail (3x)                              │
+    │  2. Container marked unhealthy                          │
+    │  3. Automatic restart (restart: always)                 │
+    │  4. Dependencies wait for healthy state                 │
+    │                                                          │
+    └────────────────────────────────────────────────────────┘
+
+═══════════════════════════════════════════════════════════════════════
+
+                      BACKUP STRATEGY
+
+    ┌────────────────────────────────────────────────────────┐
+    │                                                          │
+    │  Automated Backup Container:                            │
+    │  ───────────────────────────                            │
+    │                                                          │
+    │  Schedule: Daily at 2:00 AM                             │
+    │                                                          │
+    │  What is backed up:                                     │
+    │  • PostgreSQL database (pg_dump)                        │
+    │  • Uploaded files (rsync)                               │
+    │                                                          │
+    │  Retention: 30 days                                     │
+    │                                                          │
+    │  Location:                                              │
+    │  • Local: ./backups/                                    │
+    │  • Optional: NAS mount (configure NAS_PATH)             │
+    │                                                          │
+    │  Manual backup:                                         │
+    │  $ docker exec mineralogy-db pg_dump -U mineralogy      │
+    │    mineralogy_db > backup.sql                           │
+    │                                                          │
+    └────────────────────────────────────────────────────────┘
+
+═══════════════════════════════════════════════════════════════════════
+
+                         PORT MAPPING
+
+    ┌─────────────────────────────────────────────────────────┐
+    │  Service      │  Internal │  External  │  Description   │
+    ├───────────────┼───────────┼────────────┼────────────────┤
+    │  Caddy        │  80, 443  │  80, 443   │  Public HTTPS  │
+    │  Frontend     │  80       │  -         │  Via Caddy     │
+    │  Backend      │  8000     │  -         │  Via Caddy     │
+    │  PostgreSQL   │  5432     │  -         │  Internal only │
+    │  Keycloak     │  8080     │  8080      │  Admin console │
+    │  Portainer    │  9000     │  9000      │  HTTP          │
+    │  Portainer    │  9443     │  9443      │  HTTPS (GUI)   │
+    └─────────────────────────────────────────────────────────┘
+
+    Poznámka:
+    • "-" znamená nepřístupné z venku (bezpečnější)
+    • External = přístupné z host systému/internetu
+    • Internal = pouze v Docker network
+
+═══════════════════════════════════════════════════════════════════════
+
+                      DEPLOYMENT WORKFLOW
+
+    Developer Machine               Raspberry Pi
+    ─────────────────              ─────────────
+
+         [Code]
+           │
+           │ git push
+           ▼
+       [GitHub]
+           │
+           │ git pull
+           ▼
+    [RPI: ~/mineralogicky-denik]
+           │
+           │ ./deploy-production.sh
+           ▼
+    ┌──────────────────┐
+    │  Docker Build    │
+    │  • Backend image │
+    │  • Frontend img  │
+    └────────┬─────────┘
+             │
+             ▼
+    ┌──────────────────┐
+    │  Docker Compose  │
+    │  • Pull images   │
+    │  • Start services│
+    │  • Health checks │
+    └────────┬─────────┘
+             │
+             ▼
+    ┌──────────────────┐
+    │  🎉 RUNNING      │
+    │  All services up │
+    │  Monitor via     │
+    │  Portainer       │
+    └──────────────────┘
+
+═══════════════════════════════════════════════════════════════════════
+
+                    RESOURCE REQUIREMENTS
+
+    Raspberry Pi 4 - Doporučeno:
+    ────────────────────────────
+
+    CPU:     4 cores @ 1.5GHz (ARM64)
+    RAM:     4GB minimum, 8GB ideální
+    Storage: 64GB+ (SD card nebo SSD)
+    Network: 1Gbps Ethernet
+    Cooling: Active cooling (fan)
+    Power:   5V/3A+ official power supply
+
+    Očekávané využití:
+    ─────────────────
+
+    RAM:     2-3 GB (7 kontejnerů)
+    CPU:     20-40% za běžného provozu
+    Disk:    ~5GB aplikace + data
+    Temp:    50-65°C s aktivním chlazením
+
+═══════════════════════════════════════════════════════════════════════
+
+Vytvořeno: 31. ledna 2026
+Verze: 1.0.0 Production
+Platforma: Raspberry Pi 4 (ARM64)
+
+Pro více informací: README.production.md, PRODUCTION_SETUP.md
